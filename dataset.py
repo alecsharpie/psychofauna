@@ -16,28 +16,44 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 def generate_outrage_examples(num_examples=100):
+    
+    
+    # TODO get examples for each topic you want to avoid from a file?
     prompt_template = """
-    Generate exactly {num} examples of manufactured outrage vs neutral content. 
+    Generate exactly {num} examples of engagement bait vs genuine content.
     Return them in a JSON array format. Do not include any markdown formatting or code block markers.
     Format:
     [
         {{
-            "outrage_version": "SHOCKING: Local School Serves Regular Milk Instead of Organic - Parents OUTRAGED!",
-            "neutral_version": "School cafeteria continues standard milk service, some parents express preference for organic options",
-            "topic": "education"
+            "engagement_bait": "Working from home is overrated",
+            "genuine_content": "I enjoy going to the office more than working from home",
+            "topic": "life"
         }},
-        // more examples...
+        {{
+            "engagement_bait": "Why your favorite self-care routine might be making you more anxious",
+            "genuine_content": "I find my self-care routine helps me relax and unwind",
+            "topic": "health"
+        }},
+        {{
+            "engagement_bait": "Being disorganized made me more successful",
+            "genuine_content": "I find that being organized helps me be more productive",
+            "topic": "productivity"
+        }},
+        {{
+            "engagement_bait": "The hidden environmental cost of minimalism",
+            "genuine_content": "I think minimalism is a great way to reduce waste",
+            "topic": "environment"
+        }}
     ]
     
-    Common patterns in manufactured outrage:
-    - Excessive capitalization
-    - Emotional manipulation
-    - Catastrophizing
-    - Us vs. them framing
-    - Slippery slope arguments
-    - Conspiracy undertones
+    Engagement bait works because it is designed to:
+    Challenge assumptions people hold about themselves
+    Create cognitive dissonance that makes people want resolution
+    Tap into common insecurities or aspirations
+    Feel personally relevant
+    Promise insider knowledge or counterintuitive wisdom
     
-    Topics should include: local news, politics, education, environment, technology, health, consumer issues
+    Topics should include: local news, politics, education, environment, technology, health, consumer issues, life
     
     IMPORTANT: Response must be valid JSON array format only, no additional text or markdown.
     """
@@ -66,6 +82,7 @@ def generate_outrage_examples(num_examples=100):
         logger.info("Attempting to parse JSON response")
         try:
             examples = json.loads(cleaned_text)
+            print(examples)
             logger.info(f"Successfully parsed {len(examples)} examples")
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing failed. Error: {str(e)}")
@@ -74,9 +91,10 @@ def generate_outrage_examples(num_examples=100):
         
         dataset = []
         for ex in examples:
+            print(ex)
             dataset.extend([
-                {"text": ex["outrage_version"], "label": 1},
-                {"text": ex["neutral_version"], "label": 0}
+                {"text": ex["engagement_bait"], "label": 1},
+                {"text": ex["genuine_content"], "label": 0}
             ])
         
         logger.info(f"Created dataset with {len(dataset)} entries")
