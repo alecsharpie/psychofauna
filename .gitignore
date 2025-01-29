@@ -11,7 +11,7 @@ wheels/
 .env
 
 # Data
-**/.csv
+**.csv
 
 # Results
 engagement_classifier/
