@@ -1,24 +1,64 @@
-
 from datasets import Dataset
 from transformers import (
     DistilBertTokenizer,
     DistilBertForSequenceClassification,
+    DistilBertConfig,
     Trainer,
-    TrainingArguments
+    TrainingArguments,
+    EarlyStoppingCallback
 )
 import pandas as pd
 import numpy as np
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+import torch
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
 import logging
+from typing import Dict, Any
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('training.log')
+    ]
+)
 logger = logging.getLogger(__name__)
 
-def compute_metrics(pred):
+def set_device() -> torch.device:
+    """Set up the appropriate device for training."""
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+        logger.info("Using MPS (Apple Silicon GPU)")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        logger.info("Using CUDA GPU")
+    else:
+        device = torch.device("cpu")
+        logger.info("Using CPU")
+    return device
+
+def compute_metrics(pred) -> Dict[str, float]:
+    """
+    Compute evaluation metrics for the model.
+    """
     labels = pred.label_ids
     preds = pred.predictions.argmax(-1)
-    precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='binary')
+    
+    # Calculate metrics
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels, 
+        preds, 
+        average='binary',
+        zero_division=0
+    )
     acc = accuracy_score(labels, preds)
+    
+    # Get detailed classification report
+    report = classification_report(labels, preds)
+    logger.info(f"\nClassification Report:\n{report}")
+    
     return {
         'accuracy': acc,
         'f1': f1,
@@ -26,79 +66,147 @@ def compute_metrics(pred):
         'recall': recall
     }
 
+def prepare_dataset(file_path: str):
+    """
+    Load and prepare the dataset with stratified split.
+    """
+    try:
+        df = pd.read_csv(file_path)
+        logger.info(f"Loaded dataset with {len(df)} examples")
+        
+        # Check class balance
+        class_dist = df['label'].value_counts(normalize=True)
+        logger.info(f"Class distribution:\n{class_dist}")
+        
+        # Perform stratified split using sklearn
+        train_df, test_df = train_test_split(
+            df,
+            test_size=0.2,
+            stratify=df['label'],
+            random_state=42
+        )
+        
+        # Convert to HuggingFace Datasets
+        train_dataset = Dataset.from_pandas(train_df)
+        test_dataset = Dataset.from_pandas(test_df)
+        
+        return {
+            "train": train_dataset,
+            "test": test_dataset
+        }
+    except Exception as e:
+        logger.error(f"Error loading dataset: {e}")
+        raise
+
 def train():
-    # Load the generated dataset
-    df = pd.read_csv("outrage_training_data.csv")
+    # Set device
+    device = set_device()
     
-    # Convert to HuggingFace Dataset
-    dataset = Dataset.from_pandas(df)
-    
-    # Split dataset
-    dataset = dataset.train_test_split(test_size=0.2)
-    
-    # Load tokenizer and model
-    tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-    model = DistilBertForSequenceClassification.from_pretrained(
-        'distilbert-base-uncased',
-        num_labels=2
-    )
-    
-    def tokenize_function(examples):
-        return tokenizer(examples["text"], padding="max_length", truncation=True)
-    
-    # Apply tokenization
-    tokenized_datasets = dataset.map(tokenize_function, batched=True)
-    
-    # Training arguments
-    training_args = TrainingArguments(
-        output_dir="./results",
-        learning_rate=2e-5,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        num_train_epochs=3,
-        weight_decay=0.01,
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        logging_dir='./logs',
-        logging_steps=10
-    )
-    
-    # Initialize trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_datasets["train"],
-        eval_dataset=tokenized_datasets["test"],
-        compute_metrics=compute_metrics,
-    )
-    
-    # Train and evaluate
-    trainer.train()
-    
-    # Final evaluation
-    final_metrics = trainer.evaluate()
-    logger.info(f"Final evaluation metrics: {final_metrics}")
-    
-    # Save model
-    model_save_path = "./engagement_classifier"
-    trainer.save_model(model_save_path)
-    logger.info(f"Model saved to {model_save_path}")
-    
-    # Test some examples
-    test_texts = [
-        "Why everything you know about productivity is WRONG",
-        "I found these productivity techniques helpful for my workflow",
-    ]
-    
-    inputs = tokenizer(test_texts, padding=True, truncation=True, return_tensors="pt")
-    outputs = model(**inputs)
-    predictions = outputs.logits.argmax(dim=-1)
-    
-    logger.info("\nTest predictions:")
-    for text, pred in zip(test_texts, predictions):
-        logger.info(f"Text: {text}")
-        logger.info(f"Prediction: {'Engagement Bait' if pred == 1 else 'Genuine Content'}\n")
+    try:
+        # Load and prepare dataset
+        dataset_dict = prepare_dataset("outrage_training_data.csv")
+        
+        # Load tokenizer and model
+        tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+        # Load config and update dropout settings
+        config = DistilBertConfig.from_pretrained(
+            'distilbert-base-uncased',
+            num_labels=2,
+            dropout=0.2  # Dropout for both attention and hidden layers
+        )
+        
+        model = DistilBertForSequenceClassification.from_pretrained(
+            'distilbert-base-uncased',
+            config=config
+        ).to(device)
+        
+        def tokenize_function(examples):
+            return tokenizer(
+                examples["text"],
+                padding="max_length",
+                truncation=True,
+                max_length=128  # Adjust based on your text length
+            )
+        
+        # Apply tokenization
+        tokenized_datasets = {
+            split: dataset.map(
+                tokenize_function,
+                batched=True,
+                remove_columns=dataset.column_names
+            )
+            for split, dataset in dataset_dict.items()
+        }
+        
+        # Training arguments
+        training_args = TrainingArguments(
+            output_dir="./results",
+            learning_rate=2e-5,
+            per_device_train_batch_size=16,
+            per_device_eval_batch_size=16,
+            num_train_epochs=10,  # Increase epochs but use early stopping
+            weight_decay=0.01,
+            evaluation_strategy="steps",
+            eval_steps=50,
+            save_strategy="steps",
+            save_steps=50,
+            load_best_model_at_end=True,
+            metric_for_best_model="f1",
+            logging_dir='./logs',
+            logging_steps=10,
+            no_cuda=True if device.type == "mps" else False,
+            warmup_steps=500,
+            fp16=True if device.type == "cuda" else False,
+            gradient_accumulation_steps=2,
+            report_to="none"  # Disable wandb reporting
+        )
+        
+        # Initialize trainer with early stopping
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=tokenized_datasets["train"],
+            eval_dataset=tokenized_datasets["test"],
+            compute_metrics=compute_metrics,
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
+        )
+        
+        # Train and evaluate
+        trainer.train()
+        
+        # Final evaluation
+        final_metrics = trainer.evaluate()
+        logger.info(f"Final evaluation metrics: {final_metrics}")
+        
+        # Save model
+        model_save_path = "./engagement_classifier"
+        trainer.save_model(model_save_path)
+        tokenizer.save_pretrained(model_save_path)
+        logger.info(f"Model and tokenizer saved to {model_save_path}")
+        
+        # Test examples
+        test_texts = [
+            "Why everything you know about productivity is WRONG",
+            "I found these productivity techniques helpful for my workflow",
+            "The shocking truth about morning routines",
+            "Here's how I improved my morning routine over time",
+        ]
+        
+        # Perform inference
+        with torch.no_grad():
+            inputs = tokenizer(test_texts, padding=True, truncation=True, return_tensors="pt")
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            outputs = model(**inputs)
+            predictions = outputs.logits.argmax(dim=-1)
+        
+        logger.info("\nTest predictions:")
+        for text, pred in zip(test_texts, predictions):
+            logger.info(f"Text: {text}")
+            logger.info(f"Prediction: {'Engagement Bait' if pred == 1 else 'Genuine Content'}\n")
+            
+    except Exception as e:
+        logger.error(f"Training failed with error: {e}")
+        raise
 
 if __name__ == "__main__":
     train()

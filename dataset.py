@@ -20,42 +20,52 @@ def generate_outrage_examples(num_examples=100):
     
     # TODO get examples for each topic you want to avoid from a file?
     prompt_template = """
-    Generate exactly {num} examples of engagement bait vs genuine content.
-    Return them in a JSON array format. Do not include any markdown formatting or code block markers.
-    Format:
-    [
-        {{
-            "engagement_bait": "Working from home is overrated",
-            "genuine_content": "I enjoy going to the office more than working from home",
-            "topic": "life"
-        }},
-        {{
-            "engagement_bait": "Why your favorite self-care routine might be making you more anxious",
-            "genuine_content": "I find my self-care routine helps me relax and unwind",
-            "topic": "health"
-        }},
-        {{
-            "engagement_bait": "Being disorganized made me more successful",
-            "genuine_content": "I find that being organized helps me be more productive",
-            "topic": "productivity"
-        }},
-        {{
-            "engagement_bait": "The hidden environmental cost of minimalism",
-            "genuine_content": "I think minimalism is a great way to reduce waste",
-            "topic": "environment"
-        }}
-    ]
-    
-    Engagement bait works because it is designed to:
-    Challenge assumptions people hold about themselves
-    Create cognitive dissonance that makes people want resolution
-    Tap into common insecurities or aspirations
-    Feel personally relevant
-    Promise insider knowledge or counterintuitive wisdom
-    
-    Topics should include: local news, politics, education, environment, technology, health, consumer issues, life
-    
-    IMPORTANT: Response must be valid JSON array format only, no additional text or markdown.
+    Generate exactly {num} examples of engagement bait vs genuine content in JSON array format. Do not include any markdown formatting or code block markers.
+
+    Format should follow this structure:
+    {{
+        "engagement_bait": "text",
+        "genuine_content": "text",
+        "topic": "category"
+    }}
+
+    Engagement bait should employ these psychological tactics:
+    1. Challenge deeply-held beliefs or identity ("Everything you learned about sleep is wrong")
+    2. Create information gaps ("The morning habit successful people never talk about")
+    3. Invoke social proof anxiety ("Why your neighbors stopped doing this common practice")
+    4. Use false urgency ("This everyday habit is quietly damaging your brain")
+    5. Leverage negativity bias ("The dark truth about your favorite productivity hack")
+    6. Employ authority undermining ("Experts kept this wellness secret hidden for decades")
+    7. Create FOMO ("The investment strategy millennials are abandoning")
+    8. Use contrarian positioning ("Why being messy makes you smarter")
+    9. Trigger comparative anxiety ("The simple trick that made me earn twice as much")
+    10. Appeal to insider knowledge ("What silicon valley executives actually do before meetings")
+
+    Genuine content should:
+    - Express personal experience rather than universal claims
+    - Avoid sensationalism or extreme positions
+    - Include nuance and specific context
+    - Focus on sharing information rather than provoking reactions
+
+    Topics should include:
+    - Personal finance
+    - Career development
+    - Relationships
+    - Health & wellness
+    - Technology trends
+    - Education
+    - Environmental issues
+    - Politics
+    - Local community
+    - Mental health
+    - Parenting
+    - Consumer technology
+
+    IMPORTANT: 
+    - Each engagement bait example should use a different psychological tactic
+    - Make the engagement bait subtle and sophisticated rather than obvious
+    - Ensure the genuine content version conveys similar information but without manipulation
+    - Response must be valid JSON array format only, no additional text or markdown formatting
     """
     
     try:
