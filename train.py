@@ -28,15 +28,9 @@ logger = logging.getLogger(__name__)
 
 def set_device() -> torch.device:
     """Set up the appropriate device for training."""
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-        logger.info("Using MPS (Apple Silicon GPU)")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-        logger.info("Using CUDA GPU")
-    else:
-        device = torch.device("cpu")
-        logger.info("Using CPU")
+    # Force CPU usage regardless of available hardware
+    device = torch.device("cpu")
+    logger.info("Using CPU")
     return device
 
 def compute_metrics(pred) -> Dict[str, float]:
@@ -86,9 +80,14 @@ def prepare_dataset(file_path: str):
             random_state=42
         )
         
+        # Ensure 'text' and 'label' columns exist
+        required_columns = ['text', 'label']
+        if not all(col in df.columns for col in required_columns):
+            raise ValueError(f"Dataset must contain columns: {required_columns}")
+        
         # Convert to HuggingFace Datasets
-        train_dataset = Dataset.from_pandas(train_df)
-        test_dataset = Dataset.from_pandas(test_df)
+        train_dataset = Dataset.from_pandas(train_df.reset_index(drop=True))
+        test_dataset = Dataset.from_pandas(test_df.reset_index(drop=True))
         
         return {
             "train": train_dataset,
@@ -106,13 +105,14 @@ def train():
         # Load and prepare dataset
         dataset_dict = prepare_dataset("outrage_training_data.csv")
         
-        # Load tokenizer and model
+        # Load tokenizer
         tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+        
         # Load config and update dropout settings
         config = DistilBertConfig.from_pretrained(
             'distilbert-base-uncased',
             num_labels=2,
-            dropout=0.2  # Dropout for both attention and hidden layers
+            dropout=0.2
         )
         
         model = DistilBertForSequenceClassification.from_pretrained(
@@ -121,12 +121,16 @@ def train():
         ).to(device)
         
         def tokenize_function(examples):
-            return tokenizer(
+            """Tokenize while keeping the labels"""
+            tokenized = tokenizer(
                 examples["text"],
                 padding="max_length",
                 truncation=True,
-                max_length=128  # Adjust based on your text length
+                max_length=128
             )
+            # Make sure to return the labels along with the tokenized inputs
+            tokenized["labels"] = examples["label"]
+            return tokenized
         
         # Apply tokenization
         tokenized_datasets = {
@@ -144,7 +148,7 @@ def train():
             learning_rate=2e-5,
             per_device_train_batch_size=16,
             per_device_eval_batch_size=16,
-            num_train_epochs=10,  # Increase epochs but use early stopping
+            num_train_epochs=10,
             weight_decay=0.01,
             evaluation_strategy="steps",
             eval_steps=50,
@@ -154,11 +158,12 @@ def train():
             metric_for_best_model="f1",
             logging_dir='./logs',
             logging_steps=10,
-            no_cuda=True if device.type == "mps" else False,
             warmup_steps=500,
-            fp16=True if device.type == "cuda" else False,
+            fp16=False,
             gradient_accumulation_steps=2,
-            report_to="none"  # Disable wandb reporting
+            report_to="none",
+            use_cpu=True,  # Force CPU usage
+            use_mps_device=False  # Explicitly disable MPS
         )
         
         # Initialize trainer with early stopping
