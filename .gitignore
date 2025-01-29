@@ -9,3 +9,11 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Data
+**/.csv
+
+# Results
+engagement_classifier/
+results/
+training.log
