@@ -14,6 +14,13 @@ const statTotal = document.getElementById('statTotal');
 const statFlagged = document.getElementById('statFlagged');
 const statSafe = document.getElementById('statSafe');
 const debugToggle = document.getElementById('debugToggle');
+const topicsContainer = document.getElementById('topicsContainer');
+
+// Labels for sentiment model
+const TOPICS = [
+  { id: 'negative', label: 'Negative' },
+  { id: 'positive', label: 'Positive' },
+];
 
 // ============================================
 // Status Updates
@@ -86,8 +93,30 @@ async function handleDebugToggle() {
 }
 
 async function loadSettings() {
-  const settings = await chrome.storage.local.get(['debugMode']);
+  const settings = await chrome.storage.local.get(['debugMode', 'blockedTopics']);
   debugToggle.checked = settings.debugMode !== false; // Default to true
+
+  const blocked = new Set(settings.blockedTopics || []);
+  topicsContainer.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.checked = blocked.has(checkbox.value);
+  });
+}
+
+async function handleTopicChange() {
+  const blockedTopics = Array.from(
+    topicsContainer.querySelectorAll('input[type="checkbox"]:checked')
+  ).map((c) => c.value);
+
+  await chrome.storage.local.set({ blockedTopics });
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.url?.match(/twitter\.com|x\.com/)) {
+      await chrome.tabs.sendMessage(tab.id, { type: 'setBlockedTopics', blockedTopics });
+    }
+  } catch (error) {
+    console.log('Could not update blocked topics:', error);
+  }
 }
 
 // ============================================
@@ -95,12 +124,27 @@ async function loadSettings() {
 // ============================================
 
 debugToggle.addEventListener('change', handleDebugToggle);
+topicsContainer.addEventListener('change', handleTopicChange);
 
 // ============================================
 // Initialization
 // ============================================
 
 async function init() {
+  // Build topics checklist
+  topicsContainer.innerHTML = '';
+  TOPICS.forEach((topic) => {
+    const id = `topic-${topic.id}`;
+    const wrapper = document.createElement('label');
+    wrapper.className = 'topic-row';
+    wrapper.setAttribute('for', id);
+    wrapper.innerHTML = `
+      <input type="checkbox" id="${id}" value="${topic.id}">
+      <span>${topic.label}</span>
+    `;
+    topicsContainer.appendChild(wrapper);
+  });
+
   await loadSettings();
   await updateStatus();
   await updateStats();

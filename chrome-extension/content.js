@@ -16,7 +16,7 @@
     // Tweet container selector for Twitter/X
     tweetSelector: '[data-testid="tweet"]',
     
-    // Threshold for flagging (0-1, adjust based on model output)
+    // Threshold for flagging (legacy; used if no topic block matches)
     flagThreshold: 0.7,
     
     // Batch settings
@@ -44,6 +44,7 @@
     },
     modelReady: false,
     batchTimeout: null,
+    blockedTopics: new Set(),
   };
 
   // ============================================
@@ -254,7 +255,9 @@
         continue;
       }
       
-      const isFlagged = result.score >= CONFIG.flagThreshold;
+      const label = (result.label || '').toLowerCase();
+      const isBlockedTopic = state.blockedTopics.has(label);
+      const isFlagged = isBlockedTopic || (result.score >= CONFIG.flagThreshold);
       
       if (isFlagged) {
         element.dataset.psychofaunaFlagged = 'true';
@@ -341,6 +344,11 @@
           updateDebugPanel();
         }
         break;
+
+      case 'setBlockedTopics':
+        state.blockedTopics = new Set(message.blockedTopics || []);
+        log('Blocked topics updated:', Array.from(state.blockedTopics));
+        break;
         
       case 'getStats':
         sendResponse(state.stats);
@@ -355,13 +363,19 @@
   function init() {
     log('Initializing Psychofauna on', window.location.hostname);
     
+    // Load settings
+    chrome.storage.local.get(['debugMode', 'blockedTopics'], (settings) => {
+      CONFIG.debug = settings.debugMode !== false; // default true
+      state.blockedTopics = new Set(settings.blockedTopics || []);
+      updateDebugPanel();
+    });
+    
     // Check if model is ready
     chrome.runtime.sendMessage({ type: 'checkModelReady' }, (response) => {
       if (response?.ready) {
         state.modelReady = true;
         log('Model already ready');
       }
-      updateDebugPanel();
     });
     
     // Set up mutation observer

@@ -99,3 +99,37 @@
 .psychofauna-debug-panel .stat-value.safe {
   color: #43a047;
 }
+
+/* Popup styles (for topics selection) */
+.topics {
+  margin-top: 8px;
+  background: #252540;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.topics-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.topics .hint {
+  color: #777;
+  font-size: 11px;
+}
+
+.topics-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.topic-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}

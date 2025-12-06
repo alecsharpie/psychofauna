@@ -1,11 +1,11 @@
 /**
  * Psychofauna Background Service Worker
  *
- * MVP path: run classification directly in the service worker (no dedicated
- * web worker) to stay MV3-compliant and avoid remote imports.
+ * MVP path: classification is handled in an offscreen document so we can
+ * access DOM APIs (e.g., URL.createObjectURL) that are unavailable in the
+ * service worker context.
  */
-
-import { initModel, classifyBatch, isModelReady } from './worker.js';
+const OFFSCREEN_URL = chrome.runtime.getURL('offscreen.html');
 
 // ============================================
 // State
@@ -30,15 +30,48 @@ function notifyAllTabs(message) {
     });
 }
 
+async function ensureOffscreenDocument() {
+  if (!chrome.offscreen) {
+    console.error('[Psychofauna BG] Offscreen API not available');
+    return false;
+  }
+
+  const hasDocument = await chrome.offscreen.hasDocument?.();
+  if (hasDocument) return true;
+
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_URL,
+    reasons: ['DOM_PARSER'],
+    justification: 'Run transformer model in offscreen document',
+  });
+
+  return true;
+}
+
+function sendMessageToOffscreen(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve(response);
+      }
+    });
+  });
+}
+
 function ensureModel() {
   if (modelReady) return Promise.resolve(true);
   if (modelPromise) return modelPromise;
 
-  modelPromise = initModel()
-    .then(() => {
-      modelReady = isModelReady();
-      notifyAllTabs({ type: 'modelReady' });
-      return true;
+  modelPromise = ensureOffscreenDocument()
+    .then(() => sendMessageToOffscreen({ type: 'offscreen-init' }))
+    .then((response) => {
+      modelReady = !!response?.ready;
+      if (modelReady) {
+        notifyAllTabs({ type: 'modelReady' });
+      }
+      return modelReady;
     })
     .catch((error) => {
       console.error('[Psychofauna BG] Model init failed:', error);
@@ -63,7 +96,13 @@ async function processClassification(message, sender) {
   }
 
   try {
-    const results = await classifyBatch(message.items);
+    const response = await sendMessageToOffscreen({
+      type: 'offscreen-classify',
+      batchId: message.batchId,
+      items: message.items,
+    });
+
+    const results = response?.results || [];
 
     chrome.tabs
       .sendMessage(sender.tab.id, {
@@ -117,4 +156,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 console.log('[Psychofauna BG] Background script loaded');
 // Warm up the model immediately so the content script can start queuing.
-ensureModel();
+ensureOffscreenDocument().then(() => ensureModel());

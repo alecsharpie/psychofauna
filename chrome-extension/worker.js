@@ -1,19 +1,22 @@
 /**
- * Psychofauna ML Module (MVP)
+ * Psychofauna ML Module
  *
- * For the MVP we replace the remote Transformers.js dependency with a simple
- * heuristic-based scorer that runs entirely locally inside the background
- * service worker. This keeps us compliant with MV3 (no remote code) and avoids
- * spawning a dedicated worker.
+ * Loads a compact text-classification transformer via Transformers.js (local import)
+ * and runs it inside the MV3 background service worker. Falls back to a simple
+ * heuristic scorer if the model cannot be loaded.
  */
 
 // ============================================
-// State
+// Config
 // ============================================
 
-let modelReady = false;
+const REMOTE_MODEL_ID = 'Xenova/distilbert-base-uncased-finetuned-sst-2-english'; // sentiment: positive / negative
+const LOCAL_MODEL_ID = 'sst2'; // folder name under models/
+const LOCAL_MODEL_BASE = 'models';
+const USE_LOCAL_MODEL = true; // prefer packaged model to avoid remote fetch/CORS
+const FALLBACK_THRESHOLD = 0.7;
 
-// Keywords that often correlate with ragebait / inflammatory language
+// Keywords for heuristic fallback
 const RAGE_KEYWORDS = [
   'outrage', 'disgrace', 'worst', 'idiot', 'traitor', 'shame', 'hate',
   'destroy', 'corrupt', 'fraud', 'disgusting', 'criminal', 'liar',
@@ -21,49 +24,61 @@ const RAGE_KEYWORDS = [
   'boycott', 'never again', 'cancel', 'terrible', 'ruined', 'disaster'
 ];
 
-// Phrases that tend to signal sensationalized framing
 const CLICKBAIT_PHRASES = [
   'you won\'t believe', 'this is why', 'no one is talking about',
   'what they don\'t want you to know', 'shocking', 'unbelievable'
 ];
 
 // ============================================
-// Model Initialization (noop for heuristic)
+// State
 // ============================================
 
-export async function initModel() {
-  // Heuristic model is instant; keep async for future swap to real model.
-  modelReady = true;
-  return true;
+let modelReady = false;
+let classifier = null;
+let usingFallback = false;
+
+// ============================================
+// Helpers
+// ============================================
+
+import { pipeline, env } from './libs/transformers.min.js';
+
+// Hard-disable Worker constructor in this offscreen document to prevent
+// downstream libraries from spawning blob workers (which are blocked by CSP).
+function disableWorkersHard() {
+  if (typeof Worker !== 'undefined') {
+    try {
+      // eslint-disable-next-line no-global-assign
+      Worker = undefined;
+    } catch (_) {
+      // ignore
+    }
+  }
 }
 
-export function isModelReady() {
-  return modelReady;
+function getModelId() {
+  if (USE_LOCAL_MODEL) {
+    return LOCAL_MODEL_ID;
+  }
+  return REMOTE_MODEL_ID;
 }
-
-// ============================================
-// Scoring Helpers
-// ============================================
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
 }
 
-function computeScore(text) {
+function heuristicScore(text) {
   const original = text || '';
   const lower = original.toLowerCase();
 
   let score = 0;
 
-  // Keyword hits
   const keywordHits = RAGE_KEYWORDS.reduce((acc, kw) => acc + (lower.includes(kw) ? 1 : 0), 0);
   score += Math.min(keywordHits * 0.08, 0.5);
 
-  // Clickbait phrases
   const clickbaitHits = CLICKBAIT_PHRASES.reduce((acc, phrase) => acc + (lower.includes(phrase) ? 1 : 0), 0);
   score += Math.min(clickbaitHits * 0.12, 0.36);
 
-  // Excessive punctuation / shouting
   const exclamations = (original.match(/!/g) || []).length;
   if (exclamations >= 3) score += 0.1;
 
@@ -72,10 +87,61 @@ function computeScore(text) {
   const uppercaseRatio = uppercaseChars / letters;
   if (letters > 15 && uppercaseRatio > 0.35) score += 0.1;
 
-  // Length guard: very short texts are usually benign
   if (original.trim().length < 30) score *= 0.6;
 
   return clamp01(score);
+}
+
+// ============================================
+// Model Initialization
+// ============================================
+
+export async function initModel() {
+  if (modelReady) return true;
+  try {
+    disableWorkersHard();
+    env.allowLocalModels = USE_LOCAL_MODEL;
+    env.localModelPath = chrome.runtime.getURL(LOCAL_MODEL_BASE);
+    env.allowRemoteModels = !USE_LOCAL_MODEL;
+    // Run entirely in the offscreen document main thread (no blob workers).
+    env.allowWebWorkers = false;
+    // Disable browser cache because chrome-extension: requests are unsupported by Cache API.
+    env.useBrowserCache = false;
+    // Force ONNX runtime to avoid proxy workers and multithreading workers.
+    env.backends ??= {};
+    env.backends.onnx ??= {};
+    env.backends.onnx.wasm ??= {};
+    env.backends.onnx.wasm.proxy = false;
+    env.backends.onnx.wasm.numThreads = 1;
+    // Disable fast tokenizer to avoid its own worker/wasm fetch path.
+    env.useFastTokenizer = false;
+    env.remoteHost = 'https://huggingface.co';
+    env.fetchOptions = { mode: 'cors', credentials: 'omit' };
+
+    classifier = await pipeline('text-classification', getModelId(), {
+      quantized: true,
+      progress_callback: (progress) => {
+        if (progress?.status === 'done') {
+          console.log('[Psychofauna ML] Model download complete');
+        }
+      },
+    });
+
+    usingFallback = false;
+    modelReady = true;
+    console.log('[Psychofauna ML] Transformer model loaded:', getModelId());
+    return true;
+  } catch (error) {
+    console.error('[Psychofauna ML] Failed to load transformer model, using fallback:', error);
+    console.error('[Psychofauna ML] If using local mode, ensure model files exist under chrome-extension/models/' + LOCAL_MODEL_ID);
+    usingFallback = true;
+    modelReady = true; // still mark ready so the pipeline runs with heuristics
+    return false;
+  }
+}
+
+export function isModelReady() {
+  return modelReady;
 }
 
 // ============================================
@@ -87,15 +153,91 @@ export async function classifyBatch(items) {
     throw new Error('Model not ready');
   }
 
-  return (items || []).map((item) => {
-    const text = (item.text || '').slice(0, 512);
-    const score = computeScore(text);
+  const safeItems = items || [];
 
-    return {
-      id: item.id,
-      text: text.substring(0, 50),
-      label: score >= 0.7 ? 'ragebait' : 'safe',
-      score,
-    };
-  });
+  if (usingFallback || !classifier) {
+    return safeItems.map((item) => {
+      const text = (item.text || '').slice(0, 512);
+      const score = heuristicScore(text);
+      return {
+        id: item.id,
+        text: text.substring(0, 50),
+        label: score >= FALLBACK_THRESHOLD ? 'ragebait' : 'safe',
+        score,
+        source: 'heuristic',
+      };
+    });
+  }
+
+  const outputs = [];
+  for (const item of safeItems) {
+    const text = (item.text || '').slice(0, 512);
+    try {
+      const result = await classifier(text, { topk: 1 });
+      // result is an array like [{ label: 'World', score: 0.x }]
+      const top = Array.isArray(result) ? result[0] : result;
+      const score = top?.score ?? 0;
+      const label = (top?.label || '').toLowerCase();
+
+      outputs.push({
+        id: item.id,
+        text: text.substring(0, 50),
+        label,
+        score,
+        source: USE_LOCAL_MODEL ? 'local-' + LOCAL_MODEL_ID : REMOTE_MODEL_ID,
+      });
+    } catch (err) {
+      console.error('[Psychofauna ML] Error classifying item', item.id, err);
+      const score = heuristicScore(text);
+      outputs.push({
+        id: item.id,
+        text: text.substring(0, 50),
+        label: score >= FALLBACK_THRESHOLD ? 'ragebait' : 'safe',
+        score,
+        source: usingFallback ? 'heuristic' : 'transformer+fallback',
+        error: err?.message,
+      });
+    }
+  }
+
+  return outputs;
 }
+
+// ============================================
+// Offscreen Message Bridge
+// ============================================
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  switch (message?.type) {
+    case 'offscreen-init': {
+      initModel()
+        .then((ready) => sendResponse({ ready }))
+        .catch((err) =>
+          sendResponse({ ready: false, error: err?.message || 'Model init failed' })
+        );
+      return true; // async response
+    }
+
+    case 'offscreen-classify': {
+      (async () => {
+        if (!modelReady) {
+          const ok = await initModel();
+          if (!ok) throw new Error('Model not ready');
+        }
+
+        const results = await classifyBatch(message.items);
+        sendResponse({ batchId: message.batchId, results });
+      })().catch((err) => {
+        console.error('[Psychofauna ML] Offscreen classify failed:', err);
+        sendResponse({ error: err?.message || 'Classification failed' });
+      });
+      return true; // async response
+    }
+
+    default:
+      // Ignore unrelated messages
+      return false;
+  }
+});
+
+console.log('[Psychofauna ML] Offscreen ML module loaded');

@@ -20,3 +20,5 @@ train/training.log
 
 # OS
 .DS_Store
+
+chrome-extension/models/*

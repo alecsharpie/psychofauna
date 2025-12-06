@@ -6,14 +6,16 @@
   
   "permissions": [
     "storage",
-    "tabs"
+    "tabs",
+    "offscreen"
   ],
   
   "host_permissions": [
     "https://twitter.com/*",
     "https://x.com/*",
     "https://mobile.twitter.com/*",
-    "https://mobile.x.com/*"
+    "https://mobile.x.com/*",
+    "https://huggingface.co/*"
   ],
   
   "content_scripts": [
@@ -35,6 +37,20 @@
     "type": "module"
   },
   
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; object-src 'self'"
+  },
+  
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "libs/transformers.min.js",
+        "models/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
