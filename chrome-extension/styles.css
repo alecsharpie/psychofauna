@@ -1,0 +1,101 @@
+/* 
+ * Psychofauna Styles
+ * Styling for flagged content and debug mode
+ */
+
+/* Flagged content - red left border */
+[data-psychofauna-flagged="true"] {
+  border-left: 4px solid #e53935 !important;
+  position: relative;
+}
+
+/* Processing state - subtle gray border while waiting for classification */
+[data-psychofauna-status="processing"] {
+  border-left: 4px solid #9e9e9e !important;
+  opacity: 0.9;
+}
+
+/* Classified as safe - no special styling, just remove processing state */
+[data-psychofauna-status="safe"] {
+  border-left: none;
+}
+
+/* Debug mode overlay */
+.psychofauna-debug-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 0 0 0 4px;
+  z-index: 10000;
+  pointer-events: none;
+  max-width: 300px;
+  word-wrap: break-word;
+}
+
+.psychofauna-debug-overlay.flagged {
+  background: rgba(229, 57, 53, 0.9);
+}
+
+.psychofauna-debug-overlay.safe {
+  background: rgba(67, 160, 71, 0.9);
+}
+
+.psychofauna-debug-overlay.processing {
+  background: rgba(158, 158, 158, 0.9);
+}
+
+.psychofauna-debug-score {
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.psychofauna-debug-label {
+  opacity: 0.8;
+  margin-left: 4px;
+}
+
+/* Debug panel (floating) */
+.psychofauna-debug-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.9);
+  color: #fff;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 11px;
+  padding: 12px;
+  border-radius: 8px;
+  z-index: 100000;
+  min-width: 200px;
+  max-width: 300px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.psychofauna-debug-panel h3 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: #90caf9;
+}
+
+.psychofauna-debug-panel .stat {
+  display: flex;
+  justify-content: space-between;
+  margin: 4px 0;
+}
+
+.psychofauna-debug-panel .stat-value {
+  font-weight: bold;
+}
+
+.psychofauna-debug-panel .stat-value.flagged {
+  color: #e53935;
+}
+
+.psychofauna-debug-panel .stat-value.safe {
+  color: #43a047;
+}

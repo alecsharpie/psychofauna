@@ -1,19 +1,22 @@
 # Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+train/__pycache__/
+train/train/*.py[oc]
+train/build/
+train/dist/
+train/wheels/
+train/*.egg-info
 
 # Virtual environments
-.venv
-.env
+train/.venv
+train/.env
 
 # Data
 **.csv
 
 # Results
-engagement_classifier/
-results/
-training.log
+train/engagement_classifier/
+train/results/
+train/training.log
+
+# OS
+.DS_Store
