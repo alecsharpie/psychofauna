@@ -257,7 +257,8 @@
       
       const label = (result.label || '').toLowerCase();
       const isBlockedTopic = state.blockedTopics.has(label);
-      const isFlagged = isBlockedTopic || (result.score >= CONFIG.flagThreshold);
+      const isNegativeSentiment = label === 'negative' && result.score >= CONFIG.flagThreshold;
+      const isFlagged = isBlockedTopic || isNegativeSentiment;
       
       if (isFlagged) {
         element.dataset.psychofaunaFlagged = 'true';
