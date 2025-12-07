@@ -2,8 +2,8 @@
  * Psychofauna ML Module
  *
  * Loads a compact text-classification transformer via Transformers.js (local import)
- * and runs it inside the MV3 background service worker. Falls back to a simple
- * heuristic scorer if the model cannot be loaded.
+ * and runs it inside the MV3 offscreen document. Falls back to a simple heuristic
+ * scorer if the model cannot be loaded.
  */
 
 // ============================================
@@ -41,7 +41,9 @@ let usingFallback = false;
 // Helpers
 // ============================================
 
-import { pipeline, env } from './libs/transformers.min.js';
+let pipelineFn = null;
+let envObj = null;
+let transformersReadyPromise = null;
 
 // Hard-disable Worker constructor in this offscreen document to prevent
 // downstream libraries from spawning blob workers (which are blocked by CSP).
@@ -92,6 +94,43 @@ function heuristicScore(text) {
   return clamp01(score);
 }
 
+async function configureTransformers() {
+  if (transformersReadyPromise) return transformersReadyPromise;
+
+  transformersReadyPromise = (async () => {
+    // Nuke Worker before loading the library so it cannot snapshot the constructor.
+    disableWorkersHard();
+
+    const mod = await import(chrome.runtime.getURL('libs/transformers.min.js'));
+    pipelineFn = mod.pipeline;
+    envObj = mod.env;
+
+    if (!pipelineFn || !envObj) {
+      throw new Error('Failed to load Transformers.js exports');
+    }
+
+    // Configure to keep everything on the main thread and avoid blob workers/caches.
+    envObj.allowLocalModels = USE_LOCAL_MODEL;
+    envObj.localModelPath = chrome.runtime.getURL(LOCAL_MODEL_BASE);
+    envObj.allowRemoteModels = !USE_LOCAL_MODEL;
+    envObj.allowWebWorkers = false;
+    envObj.useBrowserCache = false;
+    envObj.backends ??= {};
+    envObj.backends.onnx ??= {};
+    envObj.backends.onnx.wasm ??= {};
+    envObj.backends.onnx.wasm.proxy = false;
+    envObj.backends.onnx.wasm.numThreads = 1;
+    envObj.useFastTokenizer = false;
+    envObj.remoteHost = 'https://huggingface.co';
+    envObj.fetchOptions = { mode: 'cors', credentials: 'omit' };
+  })().catch((err) => {
+    transformersReadyPromise = null;
+    throw err;
+  });
+
+  return transformersReadyPromise;
+}
+
 // ============================================
 // Model Initialization
 // ============================================
@@ -99,26 +138,9 @@ function heuristicScore(text) {
 export async function initModel() {
   if (modelReady) return true;
   try {
-    disableWorkersHard();
-    env.allowLocalModels = USE_LOCAL_MODEL;
-    env.localModelPath = chrome.runtime.getURL(LOCAL_MODEL_BASE);
-    env.allowRemoteModels = !USE_LOCAL_MODEL;
-    // Run entirely in the offscreen document main thread (no blob workers).
-    env.allowWebWorkers = false;
-    // Disable browser cache because chrome-extension: requests are unsupported by Cache API.
-    env.useBrowserCache = false;
-    // Force ONNX runtime to avoid proxy workers and multithreading workers.
-    env.backends ??= {};
-    env.backends.onnx ??= {};
-    env.backends.onnx.wasm ??= {};
-    env.backends.onnx.wasm.proxy = false;
-    env.backends.onnx.wasm.numThreads = 1;
-    // Disable fast tokenizer to avoid its own worker/wasm fetch path.
-    env.useFastTokenizer = false;
-    env.remoteHost = 'https://huggingface.co';
-    env.fetchOptions = { mode: 'cors', credentials: 'omit' };
+    await configureTransformers();
 
-    classifier = await pipeline('text-classification', getModelId(), {
+    classifier = await pipelineFn('text-classification', getModelId(), {
       quantized: true,
       progress_callback: (progress) => {
         if (progress?.status === 'done') {
